@@ -10,6 +10,7 @@ import {
   TrendingUp,
   Menu,
 } from "lucide-react";
+import { supabase } from "../lib/supabase";
 
 const TENRAI_API = "https://api.tenrai.org/v1";
 
@@ -42,8 +43,75 @@ export default function Navbar() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  const [user, setUser] = useState(null);
+  const [avatarUrl, setAvatarUrl] = useState("");
+  const [authLoading, setAuthLoading] = useState(true);
+
   const searchRef = useRef(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadUser(sessionUser) {
+      if (!active) return;
+
+      setUser(sessionUser);
+
+      if (!sessionUser) {
+        setAvatarUrl("");
+        setAuthLoading(false);
+        return;
+      }
+
+      const metadata = sessionUser.user_metadata || {};
+
+      let imageUrl =
+        metadata.avatar_url ||
+        metadata.picture ||
+        "";
+
+      try {
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("avatar_url")
+          .eq("id", sessionUser.id)
+          .maybeSingle();
+
+        if (!error && data?.avatar_url) {
+          imageUrl = data.avatar_url;
+        }
+      } catch (err) {
+        console.error("Unable to load profile image:", err);
+      }
+
+      if (!active) return;
+
+      setAvatarUrl(imageUrl);
+      setAuthLoading(false);
+    }
+
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (error) {
+        console.error("Unable to check session:", error);
+        if (active) setAuthLoading(false);
+        return;
+      }
+
+      loadUser(data.session?.user ?? null);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      loadUser(session?.user ?? null);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     const term = query.trim();
@@ -256,6 +324,66 @@ export default function Navbar() {
     );
   }
 
+  function renderProfileLink(mobile = false) {
+    if (authLoading) return null;
+
+    if (user) {
+      return (
+        <Link
+          to="/profile"
+          onClick={() => {
+            if (mobile) setMobileOpen(false);
+          }}
+          aria-label="Your profile"
+          title="Your profile"
+          className={
+            mobile
+              ? "flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-white"
+              : "hidden size-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/[0.09] bg-white/[0.035] text-zinc-300 transition-colors hover:border-pink-500/40 hover:bg-pink-500/10 hover:text-pink-300 sm:flex"
+          }
+        >
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt={mobile ? "" : "Your profile"}
+              referrerPolicy="no-referrer"
+              className={
+                mobile
+                  ? "size-7 shrink-0 rounded-full object-cover"
+                  : "h-full w-full object-cover"
+              }
+              onError={() => setAvatarUrl("")}
+            />
+          ) : (
+            <UserRound
+              size={mobile ? 17 : 19}
+              className={mobile ? "shrink-0" : ""}
+            />
+          )}
+
+          {mobile && "Profile"}
+        </Link>
+      );
+    }
+
+    return (
+      <Link
+        to="/login"
+        onClick={() => {
+          if (mobile) setMobileOpen(false);
+        }}
+        className={
+          mobile
+            ? "flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-pink-300 transition-colors hover:bg-pink-500/10"
+            : "hidden items-center justify-center rounded-xl bg-pink-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-pink-400 sm:flex"
+        }
+      >
+        <UserRound size={mobile ? 17 : 16} />
+        Login
+      </Link>
+    );
+  }
+
   return (
     <header className="sticky top-0 z-50 border-b border-white/[0.07] bg-[#08070b]/95 text-white shadow-[0_8px_40px_rgba(0,0,0,0.25)] backdrop-blur-2xl">
       <div className="mx-auto flex h-[72px] max-w-[1440px] items-center gap-5 px-4 sm:px-6 lg:px-10">
@@ -376,13 +504,7 @@ export default function Navbar() {
           )}
         </div>
 
-        <Link
-          to="/profile"
-          aria-label="Your profile"
-          className="hidden size-10 shrink-0 items-center justify-center rounded-2xl border border-white/[0.09] bg-white/[0.035] text-zinc-300 transition-colors hover:border-pink-500/40 hover:bg-pink-500/10 hover:text-pink-300 sm:flex"
-        >
-          <UserRound size={19} />
-        </Link>
+        {renderProfileLink()}
 
         <button
           type="button"
@@ -454,14 +576,7 @@ export default function Navbar() {
               </NavLink>
             ))}
 
-            <Link
-              to="/profile"
-              onClick={() => setMobileOpen(false)}
-              className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-zinc-400 hover:bg-white/[0.05] hover:text-white"
-            >
-              <UserRound size={17} />
-              Profile
-            </Link>
+            {renderProfileLink(true)}
           </nav>
         </div>
       )}

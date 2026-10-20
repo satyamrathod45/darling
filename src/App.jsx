@@ -39,36 +39,30 @@ export default function App() {
       <ScrollToTop />
 
       <Routes>
+        {/* Open the homepage when someone visits the website */}
         <Route
           path="/"
-          element={<Navigate to="/login" replace />}
+          element={<Navigate to="/home" replace />}
         />
 
-        <Route path="/login" element={<Login />} />
-
+        {/* Public routes */}
         <Route path="/home" element={<Home />} />
         <Route path="/trending" element={<AnimeCatalog />} />
         <Route path="/top-rated" element={<AnimeCatalog />} />
         <Route path="/popular" element={<AnimeCatalog />} />
         <Route path="/search" element={<AnimeCatalog />} />
+        <Route path="/anime/:id" element={<AnimeDetails />} />
 
-        <Route
-          path="/anime/:id"
-          element={<AnimeDetails />}
-        />
+        {/* Login and signup */}
+        <Route path="/login" element={<Login />} />
 
+        {/* Protected routes */}
         <Route element={<ProtectedRoute />}>
-          <Route
-            path="/profile"
-            element={<Profile />}
-          />
-
-          <Route
-            path="/watch/:id"
-            element={<Watch />}
-          />
+          <Route path="/profile" element={<Profile />} />
+          <Route path="/watch/:id" element={<Watch />} />
         </Route>
 
+        {/* Unknown routes */}
         <Route path="*" element={<NotFound />} />
       </Routes>
     </>
