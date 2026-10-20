@@ -1,8 +1,8 @@
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clapperboard,
@@ -23,11 +23,18 @@ import {
 const API_URL = "https://api.tenrai.org/v1";
 const PLAYER_BASE = "https://ani.api-webs.com/simple/mal";
 const EPISODES_PER_BATCH = 100;
+const MAX_EPISODE_PAGES = 200;
 
 function getEpisodeNumber(item) {
-  const value = item?.episode ?? item?.number ?? item?.episode_number;
+  const value =
+    item?.episode ??
+    item?.number ??
+    item?.episode_number ??
+    item?.episodeNumber;
 
-  if (typeof value === "number") return value;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
 
   if (typeof value === "string") {
     const match = value.match(/\d+/);
@@ -49,10 +56,13 @@ function getEpisodeTitle(item, number) {
     : `Episode ${number}`;
 }
 
-function getTotalEpisodes(anime, pagination) {
+function getTotalEpisodes(anime, pagination, loadedCount = 0) {
   return Math.max(
-    Number(pagination?.items?.total) || Number(pagination?.total) || 0,
+    Number(pagination?.items?.total) || 0,
+    Number(pagination?.total) || 0,
     Number(anime?.episodes) || 0,
+    Number(anime?.data?.episodes) || 0,
+    loadedCount,
   );
 }
 
@@ -93,6 +103,7 @@ function uniqueAnime(items, currentId) {
 
   return items.filter((item) => {
     const id = getAnimeId(item);
+
     if (!id || seen.has(id)) return false;
 
     seen.add(id);
@@ -155,7 +166,12 @@ function AnimeCard({ anime, relation }) {
   );
 }
 
-function AnimeSection({ title, description, items, showRelations = false }) {
+function AnimeSection({
+  title,
+  description,
+  items,
+  showRelations = false,
+}) {
   if (!items.length) return null;
 
   return (
@@ -185,6 +201,35 @@ function AnimeSection({ title, description, items, showRelations = false }) {
       </div>
     </section>
   );
+}
+
+function extractEpisodeList(result) {
+  if (Array.isArray(result?.episodes)) return result.episodes;
+  if (Array.isArray(result?.data?.episodes)) return result.data.episodes;
+  if (Array.isArray(result?.data?.data)) return result.data.data;
+  if (Array.isArray(result?.data)) return result.data;
+  if (Array.isArray(result?.items)) return result.items;
+  if (Array.isArray(result?.results)) return result.results;
+  return [];
+}
+
+function extractPagination(result) {
+  return (
+    result?.pagination ||
+    result?.data?.pagination ||
+    result?.data?.data?.pagination ||
+    {}
+  );
+}
+
+function getEpisodePageSignature(items) {
+  return items
+    .map((item) => {
+      const number = getEpisodeNumber(item);
+      const title = item?.title ?? item?.name ?? "";
+      return `${number ?? "unknown"}:${title}`;
+    })
+    .join("|");
 }
 
 export default function Watch() {
@@ -227,14 +272,17 @@ export default function Watch() {
         const result = await getAnimeDetails(id, controller.signal);
 
         if (!controller.signal.aborted) {
-          setAnime(result?.data ?? result);
+          const details = result?.data?.data ?? result?.data ?? result;
+          setAnime(details || null);
         }
       } catch (err) {
         if (!controller.signal.aborted && err.name !== "AbortError") {
           setAnimeError(err.message || "Unable to load anime details.");
         }
       } finally {
-        if (!controller.signal.aborted) setLoadingAnime(false);
+        if (!controller.signal.aborted) {
+          setLoadingAnime(false);
+        }
       }
     }
 
@@ -249,7 +297,7 @@ export default function Watch() {
     return () => controller.abort();
   }, [id]);
 
-  // Load episode list.
+  // Fetch every available episode page.
   useEffect(() => {
     const controller = new AbortController();
 
@@ -260,26 +308,106 @@ export default function Watch() {
       setPagination({});
 
       try {
-        const result = await getAnimeEpisodes(
-          id,
-          batch,
-          controller.signal,
-        );
+        const allEpisodes = [];
+        const seen = new Set();
 
-        const list = Array.isArray(result?.episodes) ? result.episodes : [];
-        const sorted = [...list].sort(
-          (a, b) =>
-            (getEpisodeNumber(a) ?? 0) - (getEpisodeNumber(b) ?? 0),
-        );
+        let page = 1;
+        let lastPagination = {};
+        let previousSignature = "";
+
+        while (page <= MAX_EPISODE_PAGES) {
+          const result = await getAnimeEpisodes(
+            id,
+            page,
+            controller.signal,
+          );
+
+          if (controller.signal.aborted) return;
+
+          const current = extractEpisodeList(result);
+          const currentPagination = extractPagination(result);
+
+          lastPagination = currentPagination;
+
+          if (current.length === 0) break;
+
+          // Stop if the API ignores the page parameter and repeats a page.
+          const signature = getEpisodePageSignature(current);
+
+          if (signature === previousSignature) {
+            console.warn(
+              `Tenrai repeated episode results at page ${page}.`,
+            );
+            break;
+          }
+
+          previousSignature = signature;
+
+          for (const item of current) {
+            const number = getEpisodeNumber(item);
+            const title =
+              item?.title ??
+              item?.title_english ??
+              item?.name ??
+              item?.title_japanese ??
+              "";
+
+            const key =
+              number != null
+                ? `episode-${number}`
+                : `episode-title-${title}`;
+
+            if (!seen.has(key)) {
+              seen.add(key);
+              allEpisodes.push(item);
+            }
+          }
+
+          const lastPage = Number(
+            currentPagination?.last_visible_page ??
+            currentPagination?.last_page ??
+            currentPagination?.pages ??
+            0,
+          );
+
+          const hasNext =
+            currentPagination?.has_next_page ??
+            currentPagination?.hasNextPage;
+
+          // Respect explicit pagination when it is available.
+          if (hasNext === false) break;
+          if (lastPage > 0 && page >= lastPage) break;
+
+          // If metadata is missing, keep going until the API returns
+          // an empty page or repeats a page.
+          page += 1;
+        }
+
+        const sortedEpisodes = allEpisodes.sort((a, b) => {
+          const aNumber = getEpisodeNumber(a) ?? 0;
+          const bNumber = getEpisodeNumber(b) ?? 0;
+          return aNumber - bNumber;
+        });
 
         if (controller.signal.aborted) return;
 
-        setEpisodes(sorted);
-        setPagination(result?.pagination ?? {});
+        setEpisodes(sortedEpisodes);
 
-        if (!sorted.length) {
+        setPagination({
+          ...lastPagination,
+          items: {
+            ...(lastPagination?.items || {}),
+            total: Math.max(
+              Number(lastPagination?.items?.total) || 0,
+              Number(lastPagination?.total) || 0,
+              sortedEpisodes.length,
+            ),
+          },
+        });
+
+        if (sortedEpisodes.length === 0) {
           setError(
-            "The API returned no episodes for this batch. Try another batch or check the API response.",
+            "No episodes were returned by Tenrai. Please try again.",
           );
         }
       } catch (err) {
@@ -287,7 +415,9 @@ export default function Watch() {
           setError(err.message || "Unable to load the episode list.");
         }
       } finally {
-        if (!controller.signal.aborted) setLoadingEpisodes(false);
+        if (!controller.signal.aborted) {
+          setLoadingEpisodes(false);
+        }
       }
     }
 
@@ -298,15 +428,17 @@ export default function Watch() {
     }
 
     return () => controller.abort();
-  }, [id, batch, retryCount]);
+  }, [id, retryCount]);
 
-  // Sync the selected episode with the URL.
+  // Keep the selected episode synchronized with the URL.
   useEffect(() => {
     setEpisode(requestedEpisode);
-    setBatch(Math.floor((requestedEpisode - 1) / EPISODES_PER_BATCH) + 1);
+    setBatch(
+      Math.floor((requestedEpisode - 1) / EPISODES_PER_BATCH) + 1,
+    );
   }, [id, requestedEpisode]);
 
-  // Save viewing activity for the signed-in user.
+  // Save watch history for signed-in users.
   useEffect(() => {
     let active = true;
 
@@ -345,8 +477,6 @@ export default function Watch() {
           if (insertError) throw insertError;
         }
 
-        // Update these optional fields if the table supports them.
-        // The basic history record remains valid without these columns.
         if (active) {
           const { error: updateError } = await supabase
             .from("watch_history")
@@ -359,7 +489,9 @@ export default function Watch() {
 
           if (
             updateError &&
-            !/column .* does not exist|schema cache/i.test(updateError.message)
+            !/column .* does not exist|schema cache/i.test(
+              updateError.message,
+            )
           ) {
             throw updateError;
           }
@@ -378,7 +510,7 @@ export default function Watch() {
     };
   }, [id, episode]);
 
-  // Load seasons and recommendations separately.
+  // Load related seasons and recommendations.
   useEffect(() => {
     const controller = new AbortController();
 
@@ -389,49 +521,67 @@ export default function Watch() {
       if (!id || !/^\d+$/.test(id)) return;
 
       try {
-        const [recommendationsResponse, relationsResponse] = await Promise.all([
-          fetch(`${API_URL}/anime/${id}/recommendations`, {
-            signal: controller.signal,
-          }),
-          fetch(`${API_URL}/anime/${id}/relations`, {
-            signal: controller.signal,
-          }),
-        ]);
+        const [recommendationsResponse, relationsResponse] =
+          await Promise.all([
+            fetch(`${API_URL}/anime/${id}/recommendations`, {
+              signal: controller.signal,
+            }),
+            fetch(`${API_URL}/anime/${id}/relations`, {
+              signal: controller.signal,
+            }),
+          ]);
 
         const [recommendationsData, relationsData] = await Promise.all([
           recommendationsResponse.ok
             ? recommendationsResponse.json()
             : null,
-          relationsResponse.ok ? relationsResponse.json() : null,
+          relationsResponse.ok
+            ? relationsResponse.json()
+            : null,
         ]);
 
         if (controller.signal.aborted) return;
 
-        const recommendations = (recommendationsData?.data ?? [])
+        const recommendations = (
+          recommendationsData?.data ?? []
+        )
           .map((item) => item?.entry ?? item?.anime ?? item)
           .filter((item) => getAnimeId(item));
 
-        const relations = getRelationEntries(relationsData).filter((item) => {
-          const relation = String(item.relation || "").toLowerCase();
-          const type = String(item.type || item.media_type || "").toLowerCase();
+        const relations = getRelationEntries(relationsData).filter(
+          (item) => {
+            const relation = String(
+              item.relation || "",
+            ).toLowerCase();
 
-          const isStoryRelation =
-            relation.includes("prequel") ||
-            relation.includes("sequel") ||
-            relation.includes("parent story") ||
-            relation.includes("side story");
+            const type = String(
+              item.type || item.media_type || "",
+            ).toLowerCase();
 
-          const isAnimeFormat =
-            !type ||
-            ["tv", "movie", "ova", "ona", "special"].some((format) =>
-              type.includes(format),
+            const isStoryRelation =
+              relation.includes("prequel") ||
+              relation.includes("sequel") ||
+              relation.includes("parent story") ||
+              relation.includes("side story");
+
+            const isAnimeFormat =
+              !type ||
+              ["tv", "movie", "ova", "ona", "special"].some(
+                (format) => type.includes(format),
+              );
+
+            return (
+              isStoryRelation &&
+              isAnimeFormat &&
+              getAnimeId(item)
             );
-
-          return isStoryRelation && isAnimeFormat && getAnimeId(item);
-        });
+          },
+        );
 
         setSeasonAnime(uniqueAnime(relations, id).slice(0, 12));
-        setRelatedAnime(uniqueAnime(recommendations, id).slice(0, 12));
+        setRelatedAnime(
+          uniqueAnime(recommendations, id).slice(0, 12),
+        );
       } catch (err) {
         if (err.name !== "AbortError") {
           console.error("Failed to load anime suggestions:", err);
@@ -440,33 +590,46 @@ export default function Watch() {
     }
 
     loadAnimeSuggestions();
+
     return () => controller.abort();
   }, [id]);
 
-  const totalEpisodes = getTotalEpisodes(anime, pagination);
+  const totalEpisodes = getTotalEpisodes(
+    anime,
+    pagination,
+    episodes.length,
+  );
 
   const totalBatches = Math.max(
     1,
     Math.ceil(totalEpisodes / EPISODES_PER_BATCH),
-    Number(pagination?.last_visible_page) || 1,
+    Math.ceil(episodes.length / EPISODES_PER_BATCH),
+    batch,
   );
 
   const batchStart = (batch - 1) * EPISODES_PER_BATCH + 1;
+  const batchEnd = batch * EPISODES_PER_BATCH;
 
   const filteredEpisodes = useMemo(() => {
     const query = search.trim().toLowerCase();
 
-    return episodes.filter((item) => {
+    return episodes.filter((item, index) => {
       const number = getEpisodeNumber(item);
-      const title = getEpisodeTitle(item, number ?? "?");
+      const title = getEpisodeTitle(item, number ?? index + 1);
 
-      return (
+      const inBatch =
+        number != null &&
+        number >= batchStart &&
+        number <= batchEnd;
+
+      const matchesSearch =
         !query ||
         String(number ?? "").includes(query) ||
-        title.toLowerCase().includes(query)
-      );
+        title.toLowerCase().includes(query);
+
+      return inBatch && matchesSearch;
     });
-  }, [episodes, search]);
+  }, [episodes, search, batchStart, batchEnd]);
 
   const selectedEpisode = episodes.find(
     (item) => getEpisodeNumber(item) === episode,
@@ -476,15 +639,19 @@ export default function Watch() {
     ? getEpisodeTitle(selectedEpisode, episode)
     : `Episode ${episode}`;
 
-  const playerUrl = `${PLAYER_BASE}/${encodeURIComponent(id)}/${episode}/${language}`;
+  const playerUrl =
+    `${PLAYER_BASE}/${encodeURIComponent(id || "")}/${episode}/${language}`;
 
   const changeEpisode = useCallback(
     (nextEpisode) => {
       const next = Number(nextEpisode);
+
       if (!Number.isFinite(next) || next < 1) return;
 
       setEpisode(next);
-      setBatch(Math.floor((next - 1) / EPISODES_PER_BATCH) + 1);
+      setBatch(
+        Math.floor((next - 1) / EPISODES_PER_BATCH) + 1,
+      );
       setPlayerLoading(true);
 
       setSearchParams(
@@ -501,7 +668,14 @@ export default function Watch() {
 
   function changeBatch(value) {
     const nextBatch = Number(value);
-    if (!Number.isFinite(nextBatch) || nextBatch < 1) return;
+
+    if (
+      !Number.isFinite(nextBatch) ||
+      nextBatch < 1 ||
+      nextBatch > totalBatches
+    ) {
+      return;
+    }
 
     setBatch(nextBatch);
     setSearch("");
@@ -546,9 +720,11 @@ export default function Watch() {
               <p className="mb-1 text-xs font-semibold uppercase tracking-[0.25em] text-pink-500">
                 Now watching
               </p>
+
               <h1 className="truncate text-2xl font-bold sm:text-3xl">
                 {title}
               </h1>
+
               <p className="mt-1 truncate text-sm text-zinc-400">
                 Episode {episode}: {selectedTitle}
               </p>
@@ -612,7 +788,9 @@ export default function Watch() {
                 <p className="text-xs font-semibold uppercase tracking-wider text-pink-400">
                   Episode {episode}
                 </p>
-                <h2 className="mt-1 text-lg font-semibold">{selectedTitle}</h2>
+                <h2 className="mt-1 text-lg font-semibold">
+                  {selectedTitle}
+                </h2>
               </div>
 
               <div className="flex shrink-0 items-center gap-2">
@@ -641,10 +819,14 @@ export default function Watch() {
             <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.03] p-5">
               <div className="mb-3 flex items-center gap-2">
                 <Clapperboard className="h-5 w-5 text-pink-500" />
-                <h2 className="text-lg font-semibold">About this anime</h2>
+                <h2 className="text-lg font-semibold">
+                  About this anime
+                </h2>
               </div>
+
               <p className="whitespace-pre-line text-sm leading-7 text-zinc-400">
-                {anime?.synopsis || "No synopsis is available for this anime."}
+                {anime?.synopsis ||
+                  "No synopsis is available for this anime."}
               </p>
             </div>
           </section>
@@ -655,9 +837,9 @@ export default function Watch() {
                 <div>
                   <h2 className="text-xl font-bold">Episodes</h2>
                   <p className="mt-1 text-xs text-zinc-500">
-                    {totalEpisodes
-                      ? `${totalEpisodes} episodes listed by the API`
-                      : "Episodes fetched from Tenrai"}
+                    {loadingEpisodes
+                      ? "Loading episode list..."
+                      : `${episodes.length} episodes loaded`}
                   </p>
                 </div>
 
@@ -668,6 +850,7 @@ export default function Watch() {
 
               <label className="relative mt-5 block">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
@@ -676,41 +859,41 @@ export default function Watch() {
                 />
               </label>
 
-              <label className="mt-3 block">
-                <span className="mb-2 block text-xs font-medium uppercase tracking-wider text-zinc-500">
-                  Select episode batch
-                </span>
+              <div className="mt-4">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
+                  Episode ranges
+                </p>
 
-                <div className="relative">
-                  <select
-                    value={batch}
-                    onChange={(event) => changeBatch(event.target.value)}
-                    className="w-full appearance-none rounded-xl border border-white/10 bg-[#191919] px-4 py-3 pr-10 text-sm text-white outline-none transition focus:border-pink-500/60"
-                  >
-                    {Array.from(
-                      { length: totalBatches },
-                      (_, index) => index + 1,
-                    ).map((batchNumber) => {
-                      const start =
-                        (batchNumber - 1) * EPISODES_PER_BATCH + 1;
-                      const end = totalEpisodes
-                        ? Math.min(
-                            batchNumber * EPISODES_PER_BATCH,
-                            totalEpisodes,
-                          )
-                        : batchNumber * EPISODES_PER_BATCH;
+                <div className="flex flex-wrap gap-2">
+                  {Array.from(
+                    { length: totalBatches },
+                    (_, index) => index + 1,
+                  ).map((batchNumber) => {
+                    const start =
+                      (batchNumber - 1) * EPISODES_PER_BATCH + 1;
 
-                      return (
-                        <option key={batchNumber} value={batchNumber}>
-                          {start}–{end}
-                        </option>
-                      );
-                    })}
-                  </select>
+                    const end = Math.min(
+                      batchNumber * EPISODES_PER_BATCH,
+                      totalEpisodes || batchNumber * EPISODES_PER_BATCH,
+                    );
 
-                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+                    return (
+                      <button
+                        key={batchNumber}
+                        type="button"
+                        onClick={() => changeBatch(batchNumber)}
+                        className={`rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+                          batch === batchNumber
+                            ? "border-pink-500 bg-pink-600 text-white"
+                            : "border-white/10 bg-white/[0.04] text-zinc-400 hover:border-pink-500/50 hover:text-white"
+                        }`}
+                      >
+                        {start}–{end}
+                      </button>
+                    );
+                  })}
                 </div>
-              </label>
+              </div>
             </div>
 
             <div className="max-h-[620px] min-h-52 overflow-y-auto">
@@ -721,14 +904,17 @@ export default function Watch() {
                     Fetching episode titles...
                   </p>
                   <p className="text-xs text-zinc-600">
-                    Batch {batch}: {batchStart}–
-                    {batch * EPISODES_PER_BATCH}
+                    Batch {batch}: {batchStart}–{batchEnd}
                   </p>
                 </div>
               ) : error ? (
                 <div className="flex min-h-52 flex-col items-center justify-center gap-3 p-6 text-center">
                   <TriangleAlert className="h-7 w-7 text-amber-400" />
-                  <p className="text-sm leading-6 text-zinc-400">{error}</p>
+
+                  <p className="text-sm leading-6 text-zinc-400">
+                    {error}
+                  </p>
+
                   <button
                     type="button"
                     onClick={() => setRetryCount((value) => value + 1)}
@@ -742,6 +928,7 @@ export default function Watch() {
                   <p className="text-sm text-zinc-400">
                     No matching episodes in this batch.
                   </p>
+
                   {search && (
                     <button
                       type="button"
@@ -788,11 +975,14 @@ export default function Watch() {
                         <span className="min-w-0 flex-1">
                           <span
                             className={`block text-xs font-medium ${
-                              isActive ? "text-pink-400" : "text-zinc-500"
+                              isActive
+                                ? "text-pink-400"
+                                : "text-zinc-500"
                             }`}
                           >
                             Episode {number ?? "?"}
                           </span>
+
                           <span
                             className={`mt-1 block line-clamp-2 text-sm leading-5 ${
                               isActive

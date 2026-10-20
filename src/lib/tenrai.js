@@ -1,4 +1,3 @@
-
 const API_BASE = "https://api.tenrai.org/v1";
 
 async function request(endpoint, signal) {
@@ -61,12 +60,17 @@ export async function getTrendingAnime(signal) {
 }
 
 export async function getPopularAnime(signal) {
-  const data = await request("/anime?limit=24&order_by=popularity", signal);
+  const data = await request(
+    "/anime?limit=24&order_by=popularity",
+    signal
+  );
+
   return getAnimeList(data);
 }
 
 export async function getTopRatedAnime(signal) {
   const data = await request("/top/anime?limit=24&sfw=true", signal);
+
   return getAnimeList(data).sort(
     (a, b) => (Number(b?.score) || 0) - (Number(a?.score) || 0)
   );
@@ -75,34 +79,51 @@ export async function getTopRatedAnime(signal) {
 export async function getAnimeDetails(id, signal) {
   if (!id) throw new Error("Anime ID is required.");
 
-  return request(
-    `/anime/${encodeURIComponent(id)}/full`,
-    signal
-  );
+  return request(`/anime/${encodeURIComponent(id)}/full`, signal);
 }
 
 export async function getAnimeVideos(id, signal) {
   if (!id) throw new Error("Anime ID is required.");
 
-  return request(
-    `/anime/${encodeURIComponent(id)}/videos`,
-    signal
-  );
+  return request(`/anime/${encodeURIComponent(id)}/videos`, signal);
 }
 
 export async function getAnimeEpisodes(id, page = 1, signal) {
   if (!id) throw new Error("Anime ID is required.");
 
-  const data = await request(
-    `/anime/${encodeURIComponent(id)}/episodes?page=${page}`,
-    signal
+  const response = await fetch(
+    `${API_BASE}/anime/${encodeURIComponent(id)}/episodes?page=${page}`,
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+      signal,
+    }
   );
 
-  const episodes = getAnimeList(data);
+  if (!response.ok) {
+    throw new Error(
+      `Tenrai API error: ${response.status} ${response.statusText}`
+    );
+  }
+
+  const json = await response.json();
+
+  // Keep pagination metadata even when the API places it outside "data".
+  const payload = json?.data ?? json;
+
+  const episodes = getAnimeList(payload);
+
+  const pagination =
+    payload?.pagination ??
+    json?.pagination ??
+    payload?.data?.pagination ??
+    {};
 
   return {
     episodes,
-    pagination: data?.pagination ?? {},
+    pagination,
   };
 }
 

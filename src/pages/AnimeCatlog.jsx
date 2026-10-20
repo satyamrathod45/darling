@@ -14,10 +14,7 @@ import {
   Play,
   RotateCcw,
 } from "lucide-react";
-import {
-  getAnimeImage,
-  getAnimeTitle,
-} from "../lib/tenrai";
+import { getAnimeImage, getAnimeTitle } from "../lib/tenrai";
 
 const API = "https://api.tenrai.org/v1";
 const PAGE_SIZE = 24;
@@ -101,7 +98,7 @@ function getScore(anime) {
 }
 
 function getYear(anime) {
-  const date = anime?.year
+  return anime?.year
     ? String(anime.year)
     : anime?.season_year
       ? String(anime.season_year)
@@ -110,8 +107,6 @@ function getYear(anime) {
         : anime?.start_date
           ? String(anime.start_date).slice(0, 4)
           : "";
-
-  return date;
 }
 
 function getType(anime) {
@@ -139,17 +134,25 @@ function getDescription(mode, query) {
 }
 
 function getNumberedPages(current, total) {
-  if (total <= 7) return Array.from({ length: total }, (_, index) => index + 1);
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, index) => index + 1);
+  }
 
   const pages = [1];
+
   if (current > 3) pages.push("...");
 
-  for (let page = Math.max(2, current - 1); page <= Math.min(total - 1, current + 1); page++) {
+  for (
+    let page = Math.max(2, current - 1);
+    page <= Math.min(total - 1, current + 1);
+    page++
+  ) {
     pages.push(page);
   }
 
   if (current < total - 2) pages.push("...");
   pages.push(total);
+
   return pages;
 }
 
@@ -158,13 +161,14 @@ export default function AnimeCatalog() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const path = location.pathname;
-  const mode = path === "/trending"
-    ? "trending"
-    : path === "/top-rated"
-      ? "top-rated"
-      : path === "/popular"
-        ? "popular"
-        : "search";
+  const mode =
+    path === "/trending"
+      ? "trending"
+      : path === "/top-rated"
+        ? "top-rated"
+        : path === "/popular"
+          ? "popular"
+          : "search";
 
   const query = searchParams.get("q") || "";
 
@@ -190,9 +194,9 @@ export default function AnimeCatalog() {
     status: searchParams.get("status") || "",
     year: searchParams.get("year") || "",
     minScore: searchParams.get("min_score") || "",
-    sort: searchParams.get("sort") || (
-      mode === "top-rated" ? "score" : "popularity"
-    ),
+    sort:
+      searchParams.get("sort") ||
+      (mode === "top-rated" ? "score" : "popularity"),
   });
 
   useEffect(() => {
@@ -200,6 +204,7 @@ export default function AnimeCatalog() {
     setPage(Math.max(1, Number(searchParams.get("page")) || 1));
   }, [query, searchParams]);
 
+  // Fetch autocomplete suggestions.
   useEffect(() => {
     const cleaned = searchInput.trim();
 
@@ -210,30 +215,46 @@ export default function AnimeCatalog() {
     }
 
     const controller = new AbortController();
-    const timer = setTimeout(async () => {
+
+    const timer = window.setTimeout(async () => {
       setSuggestionsLoading(true);
 
       try {
-        const params = new URLSearchParams({ q: cleaned, limit: "6", sfw: "" });
-        const json = await apiRequest(`${API}/anime?${params.toString()}`, controller.signal);
+        const params = new URLSearchParams({
+          q: cleaned,
+          limit: "6",
+          sfw: "",
+        });
+
+        const json = await apiRequest(
+          `${API}/anime?${params.toString()}`,
+          controller.signal
+        );
+
         const results = extractList(json);
+
         if (!controller.signal.aborted) {
           setSuggestions(results.slice(0, 6));
           setShowSuggestions(true);
         }
       } catch (err) {
-        if (err.name !== "AbortError") setSuggestions([]);
+        if (err.name !== "AbortError") {
+          setSuggestions([]);
+        }
       } finally {
-        if (!controller.signal.aborted) setSuggestionsLoading(false);
+        if (!controller.signal.aborted) {
+          setSuggestionsLoading(false);
+        }
       }
     }, 300);
 
     return () => {
-      clearTimeout(timer);
+      window.clearTimeout(timer);
       controller.abort();
     };
   }, [searchInput, query]);
 
+  // Load genres for the filter dropdown.
   useEffect(() => {
     const controller = new AbortController();
 
@@ -241,7 +262,11 @@ export default function AnimeCatalog() {
       setGenreLoading(true);
 
       try {
-        const json = await apiRequest(`${API}/genres/anime`, controller.signal);
+        const json = await apiRequest(
+          `${API}/genres/anime`,
+          controller.signal
+        );
+
         if (!controller.signal.aborted) {
           setGenres(extractList(json));
         }
@@ -250,14 +275,18 @@ export default function AnimeCatalog() {
           console.error("Could not load anime genres:", err);
         }
       } finally {
-        if (!controller.signal.aborted) setGenreLoading(false);
+        if (!controller.signal.aborted) {
+          setGenreLoading(false);
+        }
       }
     }
 
     loadGenres();
+
     return () => controller.abort();
   }, []);
 
+  // Load catalogue results.
   useEffect(() => {
     const controller = new AbortController();
 
@@ -266,12 +295,6 @@ export default function AnimeCatalog() {
       setError("");
 
       try {
-        const params = new URLSearchParams({
-          page: String(page),
-          limit: String(PAGE_SIZE),
-          sfw: "",
-        });
-
         let endpoint;
 
         if (mode === "trending" && !hasActiveFilters(filters)) {
@@ -293,7 +316,9 @@ export default function AnimeCatalog() {
           if (filters.genre) apiParams.set("genres", filters.genre);
           if (filters.type) apiParams.set("type", filters.type);
           if (filters.status) apiParams.set("status", filters.status);
-          if (filters.minScore) apiParams.set("min_score", filters.minScore);
+          if (filters.minScore) {
+            apiParams.set("min_score", filters.minScore);
+          }
 
           if (filters.year) {
             apiParams.set("start_date", `${filters.year}-01-01`);
@@ -312,11 +337,11 @@ export default function AnimeCatalog() {
           setTotal(pageInfo.total);
           setLastPage(
             pageInfo.lastPage ||
-            (pageInfo.total
-              ? Math.ceil(pageInfo.total / PAGE_SIZE)
-              : pageInfo.hasNext
-                ? page + 1
-                : page)
+              (pageInfo.total
+                ? Math.ceil(pageInfo.total / PAGE_SIZE)
+                : pageInfo.hasNext
+                  ? page + 1
+                  : page)
           );
         }
       } catch (err) {
@@ -325,59 +350,68 @@ export default function AnimeCatalog() {
           setItems([]);
         }
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
       }
     }
 
     loadAnime();
+
     return () => controller.abort();
   }, [mode, query, page, filters]);
 
   function hasActiveFilters(value) {
     return Boolean(
       value.genre ||
-      value.type ||
-      value.status ||
-      value.year ||
-      value.minScore ||
-      (value.sort && value.sort !== (
-        mode === "top-rated" ? "score" : "popularity"
-      ))
+        value.type ||
+        value.status ||
+        value.year ||
+        value.minScore ||
+        (value.sort &&
+          value.sort !== (mode === "top-rated" ? "score" : "popularity"))
     );
   }
 
-  const heading = mode === "trending"
-    ? "Trending Anime"
-    : mode === "top-rated"
-      ? "Top Rated Anime"
-      : mode === "popular"
-        ? "Popular Anime"
-        : query
-          ? "Search Results"
-          : "Discover Anime";
+  const heading =
+    mode === "trending"
+      ? "Trending Anime"
+      : mode === "top-rated"
+        ? "Top Rated Anime"
+        : mode === "popular"
+          ? "Popular Anime"
+          : query
+            ? "Search Results"
+            : "Discover Anime";
 
   const description = getDescription(mode, query);
   const maxPage = Math.max(1, lastPage);
 
   const activeFilterCount = useMemo(
-    () => [
-      filters.genre,
-      filters.type,
-      filters.status,
-      filters.year,
-      filters.minScore,
-    ].filter(Boolean).length,
+    () =>
+      [
+        filters.genre,
+        filters.type,
+        filters.status,
+        filters.year,
+        filters.minScore,
+      ].filter(Boolean).length,
     [filters]
   );
 
   function updateFilter(key, value) {
     setFilters((current) => ({ ...current, [key]: value }));
     setPage(1);
+
     setSearchParams((previous) => {
       const next = new URLSearchParams(previous);
       next.delete("page");
-      if (value) next.set(key === "minScore" ? "min_score" : key, value);
-      else next.delete(key === "minScore" ? "min_score" : key);
+
+      const paramKey = key === "minScore" ? "min_score" : key;
+
+      if (value) next.set(paramKey, value);
+      else next.delete(paramKey);
+
       return next;
     });
   }
@@ -391,6 +425,7 @@ export default function AnimeCatalog() {
       minScore: "",
       sort: mode === "top-rated" ? "score" : "popularity",
     });
+
     setPage(1);
     setSearchParams(query ? { q: query } : {});
   }
@@ -406,18 +441,34 @@ export default function AnimeCatalog() {
 
     next.delete("page");
     setPage(1);
+    setShowSuggestions(false);
     setSearchParams(next);
+  }
+
+  function selectSuggestion(anime) {
+    const animeId = getAnimeId(anime);
+    const title = getAnimeTitle(anime) || "Untitled Anime";
+
+    if (animeId == null || animeId === "") return;
+
+    setSearchInput(title);
+    setShowSuggestions(false);
   }
 
   function changePage(nextPage) {
     const safePage = Math.min(maxPage, Math.max(1, nextPage));
+
     setPage(safePage);
+
     setSearchParams((previous) => {
       const next = new URLSearchParams(previous);
+
       if (safePage > 1) next.set("page", String(safePage));
       else next.delete("page");
+
       return next;
     });
+
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -443,18 +494,32 @@ export default function AnimeCatalog() {
               <h1 className="text-3xl font-black tracking-tight sm:text-5xl">
                 {heading}
               </h1>
+
               <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400 sm:text-base">
                 {description}
               </p>
             </div>
 
-            <form onSubmit={submitSearch} className="flex w-full gap-2 lg:max-w-md">
+            <form
+              onSubmit={submitSearch}
+              className="flex w-full gap-2 lg:max-w-md"
+            >
               <div className="relative min-w-0 flex-1">
                 <Search className="absolute left-4 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+
                 <input
                   value={searchInput}
-                  onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-                  onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                  onFocus={() => {
+                    if (suggestions.length > 0) {
+                      setShowSuggestions(true);
+                    }
+                  }}
+                  onBlur={() => {
+                    // Let a suggestion click register before closing.
+                    window.setTimeout(() => {
+                      setShowSuggestions(false);
+                    }, 250);
+                  }}
                   onChange={(event) => {
                     setSearchInput(event.target.value);
                     setShowSuggestions(true);
@@ -465,46 +530,73 @@ export default function AnimeCatalog() {
                 />
 
                 {showSuggestions && searchInput.trim().length >= 2 && (
-                  <div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-white/10 bg-[#111] shadow-2xl shadow-black/60">
+                  <div
+                    className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-white/10 bg-[#111] shadow-2xl shadow-black/60"
+                    onMouseDown={(event) => {
+                      // Keep the input from blurring before the link click.
+                      event.preventDefault();
+                    }}
+                  >
                     {suggestionsLoading ? (
                       <div className="flex items-center gap-2 px-4 py-4 text-sm text-zinc-400">
                         <LoaderCircle className="h-4 w-4 animate-spin text-pink-500" />
                         Searching anime...
                       </div>
                     ) : suggestions.length > 0 ? (
-                      suggestions.map((anime) => {
-                        const id = getAnimeId(anime);
-                        const title = getAnimeTitle(anime) || "Untitled Anime";
+                      suggestions.map((anime, index) => {
+                        const animeId = getAnimeId(anime);
+                        const title =
+                          getAnimeTitle(anime) || "Untitled Anime";
                         const image = getAnimeImage(anime);
+
+                        if (animeId == null || animeId === "") {
+                          return null;
+                        }
 
                         return (
                           <Link
-                            key={id}
-                            to={`/anime/${id}`}
-                            onMouseDown={() => setShowSuggestions(false)}
-                            className="flex items-center gap-3 border-b border-white/[0.06] px-3 py-2.5 transition last:border-0 hover:bg-pink-500/10"
+                            key={animeId ?? `${title}-${index}`}
+                            to={`/anime/${animeId}`}
+                            onClick={() => {
+                              selectSuggestion(anime);
+                            }}
+                            className="flex items-center gap-3 border-b border-white/[0.06] px-3 py-2.5 transition last:border-0 hover:bg-pink-500/10 focus:bg-pink-500/10 focus:outline-none"
                           >
                             {image ? (
-                              <img src={image} alt="" className="h-12 w-9 rounded-md object-cover" />
+                              <img
+                                src={image}
+                                alt=""
+                                className="h-12 w-9 rounded-md object-cover"
+                              />
                             ) : (
                               <div className="h-12 w-9 rounded-md bg-white/5" />
                             )}
+
                             <span className="min-w-0 flex-1">
-                              <span className="block truncate text-sm font-medium text-zinc-100">{title}</span>
+                              <span className="block truncate text-sm font-medium text-zinc-100">
+                                {title}
+                              </span>
+
                               <span className="mt-1 block text-xs text-zinc-500">
-                                {getYear(anime)}{getYear(anime) ? " · " : ""}{getType(anime)}
+                                {getYear(anime)}
+                                {getYear(anime) ? " · " : ""}
+                                {getType(anime)}
                               </span>
                             </span>
+
                             <ChevronRight className="h-4 w-4 shrink-0 text-zinc-600" />
                           </Link>
                         );
                       })
                     ) : (
-                      <p className="px-4 py-4 text-sm text-zinc-500">No suggestions found.</p>
+                      <p className="px-4 py-4 text-sm text-zinc-500">
+                        No suggestions found.
+                      </p>
                     )}
                   </div>
                 )}
               </div>
+
               <button
                 type="submit"
                 className="rounded-xl bg-pink-600 px-5 text-sm font-bold transition hover:bg-pink-500"
@@ -553,6 +645,7 @@ export default function AnimeCatalog() {
           >
             <SlidersHorizontal className="h-4 w-4" />
             Filters
+
             {activeFilterCount > 0 && (
               <span className="rounded-full bg-pink-600 px-2 py-0.5 text-xs text-white">
                 {activeFilterCount}
@@ -574,6 +667,7 @@ export default function AnimeCatalog() {
                   Combine filters to narrow your results.
                 </p>
               </div>
+
               <button
                 onClick={resetFilters}
                 className="inline-flex items-center gap-2 text-xs font-semibold text-zinc-400 transition hover:text-pink-400"
@@ -589,11 +683,16 @@ export default function AnimeCatalog() {
                 value={filters.genre}
                 onChange={(value) => updateFilter("genre", value)}
                 options={[
-                  { value: "", label: genreLoading ? "Loading genres..." : "All genres" },
-                  ...genres.map((genre) => ({
-                    value: String(genre.mal_id ?? genre.id ?? ""),
-                    label: genre.name,
-                  })).filter((genre) => genre.value),
+                  {
+                    value: "",
+                    label: genreLoading ? "Loading genres..." : "All genres",
+                  },
+                  ...genres
+                    .map((genre) => ({
+                      value: String(genre.mal_id ?? genre.id ?? ""),
+                      label: genre.name,
+                    }))
+                    .filter((genre) => genre.value),
                 ]}
               />
 
@@ -655,19 +754,26 @@ export default function AnimeCatalog() {
                 ? `${total.toLocaleString()} results found`
                 : `${items.length} anime shown`}
           </p>
+
           <p className="text-xs text-zinc-600">
-            Page {page}{lastPage > 1 ? ` of ${lastPage}` : ""}
+            Page {page}
+            {lastPage > 1 ? ` of ${lastPage}` : ""}
           </p>
         </div>
 
         {error && (
           <div className="mb-6 flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] p-4 text-sm text-red-300">
             <X className="mt-0.5 h-4 w-4 shrink-0" />
+
             <div>
               <p className="font-semibold">Unable to load anime</p>
               <p className="mt-1 text-red-200/70">{error}</p>
+
               <button
-                onClick={() => setPage((current) => current)}
+                onClick={() => {
+                  setPage((current) => current);
+                  setError("");
+                }}
                 className="mt-2 underline underline-offset-4"
               >
                 Try again
@@ -685,9 +791,11 @@ export default function AnimeCatalog() {
           <div className="flex min-h-72 flex-col items-center justify-center rounded-2xl border border-white/10 bg-white/[0.02] p-8 text-center">
             <Search className="mb-4 h-9 w-9 text-zinc-600" />
             <h2 className="text-xl font-bold">No anime found</h2>
+
             <p className="mt-2 max-w-md text-sm leading-6 text-zinc-500">
               Try a different title or clear some filters to see more results.
             </p>
+
             <button
               onClick={resetFilters}
               className="mt-5 rounded-xl bg-pink-600 px-5 py-3 text-sm font-bold hover:bg-pink-500"
@@ -711,7 +819,10 @@ export default function AnimeCatalog() {
                   layout
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.22, delay: Math.min(index * 0.02, 0.2) }}
+                  transition={{
+                    duration: 0.22,
+                    delay: Math.min(index * 0.02, 0.2),
+                  }}
                   className="group min-w-0"
                 >
                   <Link
@@ -756,9 +867,13 @@ export default function AnimeCatalog() {
                         <p className="line-clamp-2 text-sm font-bold leading-5 text-white sm:text-base">
                           {title}
                         </p>
+
                         <p className="mt-1 text-xs text-zinc-400">
-                          {getYear(anime)}{getYear(anime) ? " · " : ""}
-                          {anime?.episodes ? `${anime.episodes} episodes` : getType(anime)}
+                          {getYear(anime)}
+                          {getYear(anime) ? " · " : ""}
+                          {anime?.episodes
+                            ? `${anime.episodes} episodes`
+                            : getType(anime)}
                         </p>
                       </div>
                     </div>
@@ -783,7 +898,12 @@ export default function AnimeCatalog() {
             <div className="flex items-center gap-2">
               {getNumberedPages(page, maxPage).map((pageNumber, index) =>
                 pageNumber === "..." ? (
-                  <span key={`dots-${index}`} className="px-1 text-zinc-600">...</span>
+                  <span
+                    key={`dots-${index}`}
+                    className="px-1 text-zinc-600"
+                  >
+                    ...
+                  </span>
                 ) : (
                   <button
                     key={pageNumber}
@@ -822,13 +942,17 @@ function FilterSelect({ label, value, onChange, options }) {
       <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-zinc-500">
         {label}
       </span>
+
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className="w-full rounded-xl border border-white/10 bg-[#191919] px-3 py-3 text-sm text-zinc-200 outline-none transition focus:border-pink-500/60"
       >
         {options.map((option) => (
-          <option key={`${option.value}-${option.label}`} value={option.value}>
+          <option
+            key={`${option.value}-${option.label}`}
+            value={option.value}
+          >
             {option.label}
           </option>
         ))}
