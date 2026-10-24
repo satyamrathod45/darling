@@ -1,3 +1,4 @@
+
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import Home from "./pages/Home";
@@ -9,6 +10,7 @@ import Login from "./pages/Login";
 
 import ProtectedRoute from "./components/ProtectedRoute";
 import ScrollToTop from "./components/ScrollToTop";
+import ZeroTwoWidget from "./components/ZeroTwo";
 
 function NotFound() {
   return (
@@ -56,15 +58,20 @@ export default function App() {
         {/* Login and signup */}
         <Route path="/login" element={<Login />} />
 
+          <Route path="/watch/:id" element={<Watch />} />
+
+
         {/* Protected routes */}
         <Route element={<ProtectedRoute />}>
           <Route path="/profile" element={<Profile />} />
-          <Route path="/watch/:id" element={<Watch />} />
         </Route>
 
         {/* Unknown routes */}
         <Route path="*" element={<NotFound />} />
       </Routes>
+
+      {/* Global Zero Two companion */}
+      {/* <ZeroTwoWidget /> */}
     </>
   );
 }

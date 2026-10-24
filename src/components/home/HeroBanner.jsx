@@ -49,42 +49,58 @@ async function fetchAnimeBanner(malId, signal) {
   return result?.data?.Media?.bannerImage || "";
 }
 
-function findTrailerUrl(response) {
-  const candidates = [
-    response?.trailer,
-    response?.data?.trailer,
-    response?.video,
-    response?.data?.video,
-    ...(Array.isArray(response) ? response : []),
-    ...(Array.isArray(response?.data) ? response.data : []),
-    ...(Array.isArray(response?.videos) ? response.videos : []),
-    ...(Array.isArray(response?.data?.videos) ? response.data.videos : []),
-    ...(Array.isArray(response?.results) ? response.results : []),
-    ...(Array.isArray(response?.data?.results) ? response.data.results : []),
+function findTrailerEmbedUrl(response) {
+  // getAnimeVideos() unwraps json.data, so Tenrai's documented shape is:
+  // { promo: [{ title: "Main Trailer", trailer: { embed_url, youtube_id, url } }] }
+  const payload = response?.data ?? response;
+  const promo = Array.isArray(payload?.promo) ? payload.promo : [];
+
+  const trailers = [
+    ...promo.map((item) => item?.trailer),
+    payload?.trailer,
+    ...(Array.isArray(payload?.videos) ? payload.videos : []),
+    ...(Array.isArray(payload?.results) ? payload.results : []),
   ].filter(Boolean);
 
-  for (const item of candidates) {
+  for (const trailer of trailers) {
+    // Prefer the actual embed URL returned by Tenrai.
+    const embedUrl =
+      typeof trailer === "object" ? trailer.embed_url : "";
+
+    if (typeof embedUrl === "string" && embedUrl.includes("youtube.com/embed/")) {
+      return embedUrl;
+    }
+
+    // Fallback for records that expose a YouTube URL or ID but no embed_url.
     const url =
-      typeof item === "string"
-        ? item
-        : item?.url ||
-          item?.trailer_url ||
-          item?.youtube_url ||
-          item?.embed_url ||
-          item?.link ||
-          (item?.youtube_id
-            ? `https://www.youtube.com/watch?v=${item.youtube_id}`
-            : item?.video_id
-              ? `https://www.youtube.com/watch?v=${item.video_id}`
-              : "");
+      typeof trailer === "string"
+        ? trailer
+        : trailer?.url || trailer?.trailer_url || trailer?.youtube_url || trailer?.link || "";
+    const videoId =
+      trailer?.youtube_id || trailer?.video_id || getYouTubeVideoId(url);
 
-    if (!url) continue;
-
-    const videoId = getYouTubeVideoId(url);
-    if (videoId) return videoId;
+    if (typeof videoId === "string" && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+      return `https://www.youtube-nocookie.com/embed/${videoId}`;
+    }
   }
 
   return "";
+}
+
+function withAutoplayParams(embedUrl) {
+  if (!embedUrl) return "";
+
+  try {
+    const url = new URL(embedUrl);
+    url.searchParams.set("autoplay", "1");
+    url.searchParams.set("mute", "1");
+    url.searchParams.set("playsinline", "1");
+    url.searchParams.set("controls", "0");
+    url.searchParams.set("rel", "0");
+    return url.toString();
+  } catch {
+    return "";
+  }
 }
 
 export default function HeroBanner({ anime = [], loading = false }) {
@@ -112,7 +128,7 @@ export default function HeroBanner({ anime = [], loading = false }) {
 
   const current = anime[activeIndex];
   const animeId = current?.mal_id ?? current?.id;
-  const malId = current?.mal_id;
+  const malId = current?.mal_id ?? current?.id;
   const title = current ? getAnimeTitle(current) : "";
   const fallbackImage = current ? getAnimeImage(current) : "";
 
@@ -152,22 +168,23 @@ export default function HeroBanner({ anime = [], loading = false }) {
     }
 
     let cancelled = false;
+    const controller = new AbortController();
 
     async function loadTrailer() {
       setTrailerLoading(true);
 
       try {
-        const response = await getAnimeVideos(animeId);
-        const videoId = findTrailerUrl(response);
+        const response = await getAnimeVideos(animeId, controller.signal);
+        const embedUrl = findTrailerEmbedUrl(response);
 
         if (!cancelled) {
           setTrailers((previous) => ({
             ...previous,
-            [animeId]: videoId || null,
+            [animeId]: embedUrl || null,
           }));
         }
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && error.name !== "AbortError") {
           console.error("Could not load anime trailer:", error);
           setTrailers((previous) => ({
             ...previous,
@@ -183,6 +200,7 @@ export default function HeroBanner({ anime = [], loading = false }) {
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [hovered, animeId, trailers]);
 
@@ -196,8 +214,9 @@ export default function HeroBanner({ anime = [], loading = false }) {
 
   const bannerImage = malId ? bannerImages[malId] : "";
   const image = bannerImage || fallbackImage;
-  const trailerId = animeId ? trailers[animeId] : "";
-  const showTrailer = hovered && Boolean(trailerId);
+  const trailerEmbedUrl = animeId ? trailers[animeId] : "";
+  const autoplayTrailerUrl = withAutoplayParams(trailerEmbedUrl);
+  const showTrailer = hovered && Boolean(autoplayTrailerUrl);
 
   const score = Number(current?.score ?? current?.mean ?? 0);
 
@@ -251,8 +270,8 @@ export default function HeroBanner({ anime = [], loading = false }) {
               className="absolute inset-0"
             >
               <iframe
-                key={trailerId}
-                src={`https://www.youtube-nocookie.com/embed/${trailerId}?autoplay=1&mute=1&controls=0&playsinline=1&rel=0&modestbranding=1&iv_load_policy=3&disablekb=1&enablejsapi=1`}
+                key={autoplayTrailerUrl}
+                src={autoplayTrailerUrl}
                 title={`${title} trailer`}
                 allow="autoplay; encrypted-media; picture-in-picture"
                 referrerPolicy="strict-origin-when-cross-origin"
@@ -338,7 +357,7 @@ export default function HeroBanner({ anime = [], loading = false }) {
                 </button>
               </div>
 
-              {hovered && !trailerId && (
+              {hovered && !trailerEmbedUrl && (
                 <div className="mt-4 inline-flex items-center gap-2 text-xs text-zinc-400">
                   {trailerLoading ? (
                     <>

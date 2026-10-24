@@ -48,8 +48,10 @@ export default function Navbar() {
   const [authLoading, setAuthLoading] = useState(true);
 
   const searchRef = useRef(null);
+  const mobileSearchRef = useRef(null);
   const navigate = useNavigate();
 
+  // Authentication and profile picture
   useEffect(() => {
     let active = true;
 
@@ -113,6 +115,7 @@ export default function Navbar() {
     };
   }, []);
 
+  // Anime search
   useEffect(() => {
     const term = query.trim();
 
@@ -182,20 +185,26 @@ export default function Navbar() {
     };
   }, [query]);
 
+  // Close dropdown only when tapping outside BOTH search containers.
   useEffect(() => {
     function handleOutsideClick(event) {
-      if (
-        searchRef.current &&
-        !searchRef.current.contains(event.target)
-      ) {
+      const clickedDesktop =
+        searchRef.current?.contains(event.target);
+
+      const clickedMobile =
+        mobileSearchRef.current?.contains(event.target);
+
+      if (!clickedDesktop && !clickedMobile) {
         setSearchOpen(false);
       }
     }
 
     document.addEventListener("mousedown", handleOutsideClick);
+    document.addEventListener("touchstart", handleOutsideClick);
 
     return () => {
       document.removeEventListener("mousedown", handleOutsideClick);
+      document.removeEventListener("touchstart", handleOutsideClick);
     };
   }, []);
 
@@ -212,15 +221,25 @@ export default function Navbar() {
     navigate(`/search?q=${encodeURIComponent(term)}`);
   }
 
+  // Navigate directly to the selected anime's details page.
   function openAnime(anime) {
-    const id = anime?.mal_id ?? anime?.id;
+    const id = anime?.mal_id ?? anime?.id ?? anime?.anime_id;
 
-    if (!id) return;
+    if (id == null || id === "") {
+      console.error("Anime ID missing from search result:", anime);
+      setError("Unable to open this anime. Its ID is missing.");
+      return;
+    }
 
     setSearchOpen(false);
+    setMobileOpen(false);
     setQuery("");
+    setResults([]);
+    setError("");
 
-    navigate(`/anime/${id}`);
+    navigate(`/anime/${id}`, {
+      state: { anime },
+    });
   }
 
   function renderResults() {
@@ -258,7 +277,8 @@ export default function Navbar() {
           {results.map((anime, index) => {
             const title = getAnimeTitle(anime);
             const image = getAnimeImage(anime);
-            const id = anime?.mal_id ?? anime?.id;
+            const id =
+              anime?.mal_id ?? anime?.id ?? anime?.anime_id;
 
             return (
               <button
@@ -429,6 +449,7 @@ export default function Navbar() {
 
         <div className="flex-1" />
 
+        {/* Desktop search */}
         <div
           ref={searchRef}
           className="relative hidden w-full max-w-[390px] sm:block"
@@ -486,7 +507,7 @@ export default function Navbar() {
           </form>
 
           {searchOpen && query.trim() && (
-            <div className="absolute left-0 right-0 top-[calc(100%+12px)] overflow-hidden rounded-2xl border border-white/[0.1] bg-[#100d15] shadow-[0_24px_80px_rgba(0,0,0,0.65)]">
+            <div className="absolute left-0 right-0 top-[calc(100%+12px)] z-50 overflow-hidden rounded-2xl border border-white/[0.1] bg-[#100d15] shadow-[0_24px_80px_rgba(0,0,0,0.65)]">
               <div className="flex items-center justify-between border-b border-white/[0.07] px-4 py-3">
                 <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500">
                   Anime search
@@ -516,8 +537,9 @@ export default function Navbar() {
         </button>
       </div>
 
-      <div className="border-t border-white/[0.05] px-4 py-3 sm:hidden">
-        <div className="relative">
+      {/* Mobile search */}
+      <div className="relative z-40 border-t border-white/[0.05] px-4 py-3 sm:hidden">
+        <div ref={mobileSearchRef} className="relative">
           <form
             onSubmit={submitSearch}
             className="flex h-11 items-center rounded-xl border border-white/[0.09] bg-white/[0.035]"
@@ -536,6 +558,22 @@ export default function Navbar() {
               className="h-full min-w-0 flex-1 bg-transparent px-3 text-sm text-white outline-none placeholder:text-zinc-600"
             />
 
+            {query && (
+              <button
+                type="button"
+                onClick={() => {
+                  setQuery("");
+                  setResults([]);
+                  setError("");
+                  setSearchOpen(true);
+                }}
+                aria-label="Clear search"
+                className="mr-1 grid size-8 shrink-0 place-items-center rounded-lg text-zinc-500 hover:bg-white/[0.07] hover:text-white"
+              >
+                <X size={15} />
+              </button>
+            )}
+
             <button
               type="submit"
               aria-label="Submit search"
@@ -546,7 +584,7 @@ export default function Navbar() {
           </form>
 
           {searchOpen && query.trim() && (
-            <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-50 overflow-hidden rounded-2xl border border-white/10 bg-[#100d15] shadow-2xl">
+            <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-[60] overflow-hidden rounded-2xl border border-white/10 bg-[#100d15] shadow-2xl">
               {renderResults()}
             </div>
           )}

@@ -106,7 +106,7 @@ export default function AnimeSection({
               key={item.mal_id ?? item.id ?? `${title}-${index}`}
               className="w-[43%] shrink-0 snap-start sm:w-[30%] md:w-[23%] lg:w-[17%]"
             >
-              <AnimeCard anime={item} index={index} />
+              <AnimeCard anime={item} index={index} onClick/>
             </div>
           ))}
         </motion.div>
